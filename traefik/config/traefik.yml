@@ -1,0 +1,69 @@
+global:
+  checkNewVersion: true
+  sendAnonymousUsage: false
+api:
+  dashboard: true
+  basePath: /traefik
+
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: proxy
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+  # Container registry (HTTP : Docker l'accepte nativement sur localhost:<port>)
+  registry:
+    address: ":5050"
+    transport:
+      respondingTimeouts:
+        readTimeout: 0s # pas de timeout : les push de grosses couches peuvent être longs
+
+# Nécessaire pour l'export des logs en OTLP
+experimental:
+  otlpLogs: true
+
+# Logs applicatifs de Traefik -> Alloy (OTLP) -> Loki
+log:
+  level: INFO
+  format: json
+  otlp:
+    serviceName: traefik
+    http:
+      endpoint: http://alloy:4318/v1/logs
+
+# Access logs -> Alloy (OTLP) -> Loki
+accessLog:
+  format: json
+  fields:
+    headers:
+      defaultMode: drop
+      names:
+        User-Agent: keep
+        Referer: keep
+  otlp:
+    serviceName: traefik-access
+    http:
+      endpoint: http://alloy:4318/v1/logs
+
+# Traces -> Alloy (OTLP) -> Tempo
+tracing:
+  serviceName: traefik
+  sampleRate: 1.0 # 100% des requêtes, à réduire en prod (ex. 0.1)
+  otlp:
+    http:
+      endpoint: http://alloy:4318/v1/traces
+
+# Métriques -> Alloy (OTLP) -> Prometheus
+metrics:
+  otlp:
+    serviceName: traefik
+    addEntryPointsLabels: true
+    addRoutersLabels: true
+    addServicesLabels: true
+    pushInterval: 10s
+    http:
+      endpoint: http://alloy:4318/v1/metrics

@@ -1,0 +1,124 @@
+// =============================================================================
+// Alloy : point d'entrée unique de la télémétrie
+//   - OTLP (gRPC :4317 / HTTP :4318) : Traefik et les futures apps (front/back)
+//       * métriques -> Prometheus (remote write)
+//       * logs      -> Loki (endpoint OTLP natif)
+//       * traces    -> Tempo
+//   - Logs stdout des conteneurs Docker portant le label "logs.collect=true"
+//       (fallback pour les apps non instrumentées en OTLP)
+// =============================================================================
+
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+// ---------------------------------------------------------------- OTLP ------
+otelcol.receiver.otlp "default" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+  http {
+    endpoint = "0.0.0.0:4318"
+    // Autorise le front (navigateur) à pousser en OTLP/HTTP
+    cors {
+      allowed_origins = ["http://*.localhost", "https://*.localhost"]
+    }
+  }
+
+  output {
+    metrics = [otelcol.processor.batch.default.input]
+    logs    = [otelcol.processor.batch.default.input]
+    traces  = [otelcol.processor.batch.default.input]
+  }
+}
+
+otelcol.processor.batch "default" {
+  output {
+    metrics = [otelcol.exporter.prometheus.default.input]
+    logs    = [otelcol.exporter.otlphttp.loki.input]
+    traces  = [otelcol.exporter.otlp.tempo.input]
+  }
+}
+
+// Traces OTLP -> Tempo
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+    tls {
+      insecure = true
+    }
+  }
+}
+
+// Métriques OTLP -> format Prometheus (service.name devient le label "job")
+otelcol.exporter.prometheus "default" {
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = "http://prometheus:9090/api/v1/write"
+  }
+}
+
+// Logs OTLP -> Loki (service_name devient un label indexé)
+otelcol.exporter.otlphttp "loki" {
+  client {
+    endpoint = "http://loki:3100/otlp"
+    tls {
+      insecure = true
+    }
+  }
+}
+
+// ------------------------------------------------------ Scrape metrics ------
+// Services exposant un endpoint /metrics Prometheus sur le réseau "proxy"
+// (Prometheus n'y a pas accès directement, Alloy scrape et pousse en remote write)
+prometheus.scrape "proxy_services" {
+  targets = [
+    {"__address__" = "registry:5001", "job" = "registry"},
+  ]
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.default.receiver]
+}
+
+// --------------------------------------------------------- Docker logs ------
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+  filter {
+    name   = "label"
+    values = ["logs.collect=true"]
+  }
+}
+
+discovery.relabel "containers" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service_name"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.containers.targets
+  relabel_rules = discovery.relabel.containers.rules
+  forward_to    = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

@@ -1,0 +1,32 @@
+# Serveur de tokens (cesanta/docker_auth) : authentifie les clients Docker
+# et délivre un JWT limité aux droits définis dans "acl".
+server:
+  addr: ":5001"
+  # TLS terminé en amont (ici : pas de TLS, choix "insecure-registries")
+
+token:
+  issuer: "registry-token-issuer"   # doit correspondre à auth.token.issuer du registry
+  expiration: 900                   # durée de vie d'un token : 15 min
+  certificate: /certs/auth.crt
+  key: /certs/auth.key
+
+# Utilisateurs statiques - mots de passe hachés en bcrypt.
+# Ajouter un utilisateur : htpasswd -nbBC 10 <user> <password>  (garder la partie après ':')
+users:
+  "admin":
+    password: "$2y$10$gXcC7F4V3ZB6AMqs6xE7UuSKecJ9zOtTdMiJtFKXP.b..NHUbfB1W"
+  "ci":
+    password: "$2y$10$TRXrtA.YxpG1TEsc85NnFus6hDMMCb5ykmSeobZbzS6bZF1YFY.c2"
+
+# Règles évaluées dans l'ordre, la première qui matche s'applique.
+# Pas de règle = accès refusé (y compris en anonyme).
+acl:
+  - match: { account: "/.+/", type: "registry", name: "catalog" }
+    actions: ["*"]
+    comment: "tout utilisateur authentifié peut lister le catalogue"
+  - match: { account: "admin" }
+    actions: ["*"]                  # push, pull, delete
+    comment: "admin : accès complet"
+  - match: { account: "ci" }
+    actions: ["pull"]
+    comment: "ci : lecture seule"

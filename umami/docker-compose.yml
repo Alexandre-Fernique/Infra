@@ -1,0 +1,24 @@
+services:
+  umami:
+    image: docker.umami.is/umami-software/umami:latest
+    container_name: umami
+    restart: unless-stopped
+    ports:
+      - 3000:3000
+    environment:
+      DATABASE_URL: "postgresql://umami:umami@db:5432/umami"
+      HASH_SALT: "your_hash_salt_here"
+    depends_on:
+      - db
+  db:
+    image: postgres:latest
+    container_name: db
+    restart: unless-stopped
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_USER: umami
+      POSTGRES_PASSWORD: umami
+      POSTGRES_DB: umami
+    volumes:
+      - ./db_data:/var/lib/postgresql

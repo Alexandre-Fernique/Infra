@@ -1,0 +1,28 @@
+services:
+  traefik:
+    image: traefik:v3.6
+    container_name: traefik
+
+    ports:
+      - "80:80"
+      - "443:443"
+      - "5050:5050" # container registry
+
+    networks:
+      - proxy
+
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - ./config/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./certs:/var/traefik/certs:rw
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.localhost`) && PathPrefix(`/traefik`)"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.middlewares=auth"
+      - "traefik.http.middlewares.auth.basicauth.users=admin:$$apr1$$cfEOCqy2$$etE/PAab157J90IriNW/G/" # admin/password
+
+# Réseau partagé : Traefik, la stack monitoring et les futures apps s'y rattachent
+networks:
+  proxy:
+    name: proxy

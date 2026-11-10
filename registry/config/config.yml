@@ -1,0 +1,46 @@
+# CNCF Distribution (registry:3)
+version: 0.1
+
+log:
+  level: info
+  formatter: json
+  fields:
+    service: registry
+
+storage:
+  filesystem:
+    rootdirectory: /var/lib/registry
+  delete:
+    enabled: true
+  cache:
+    blobdescriptor: inmemory
+
+http:
+  addr: :5000
+  relativeurls: true # URLs relatives : fonctionne quel que soit le host/port vu par le client
+  headers:
+    X-Content-Type-Options: [nosniff]
+  # Endpoint de debug interne (non exposé par Traefik) : métriques Prometheus
+  debug:
+    addr: :5001
+    prometheus:
+      enabled: true
+      path: /metrics
+
+# Authentification par token : tout accès (push ET pull) exige un JWT signé
+# par le serveur d'auth, avec les droits adaptés au dépôt demandé.
+auth:
+  token:
+    # URL où le client Docker va chercher son token (doit être joignable PAR LE CLIENT).
+    # Surchargeable via la variable d'env REGISTRY_AUTH_TOKEN_REALM.
+    realm: http://localhost:5050/auth
+    service: container-registry
+    issuer: registry-token-issuer
+    # Clé publique de vérification des tokens (générée par ../gen-keys.sh)
+    jwks: /etc/distribution/jwks.json
+
+health:
+  storagedriver:
+    enabled: true
+    interval: 10s
+    threshold: 3

@@ -1,0 +1,68 @@
+# Container registry privé : push ET pull authentifiés par token (JWT)
+# Prérequis : la stack traefik/ (réseau "proxy" + entrypoint "registry" :5050)
+#             et la stack monitoring/ (Alloy) pour les logs / métriques / traces.
+#
+# Sur localhost, Docker tente d'abord HTTPS (sans vérifier le certificat) puis
+# retombe en HTTP : chaque service a donc un router HTTP et un router TLS
+# (certificat par défaut de Traefik) sur le même entrypoint.
+
+services:
+  registry:
+    image: registry:3
+    container_name: registry
+    restart: unless-stopped
+    environment:
+      REGISTRY_AUTH_TOKEN_REALM: ${REGISTRY_PUBLIC_URL:-http://localhost:5050}/auth
+      # Traces OpenTelemetry -> Alloy -> Tempo
+      OTEL_SERVICE_NAME: registry
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+    volumes:
+      - ./config/config.yml:/etc/distribution/config.yml:ro
+      - ./config/jwks.json:/etc/distribution/jwks.json:ro
+      - registry_data:/var/lib/registry
+    networks:
+      - proxy
+    depends_on:
+      - registry-auth
+    labels:
+      - "logs.collect=true" # logs stdout -> Alloy -> Loki
+      - "traefik.enable=true"
+      - "traefik.http.services.registry.loadbalancer.server.port=5000"
+      - "traefik.http.routers.registry.rule=PathPrefix(`/v2`)"
+      - "traefik.http.routers.registry.entrypoints=registry"
+      - "traefik.http.routers.registry.service=registry"
+      - "traefik.http.routers.registry-tls.rule=PathPrefix(`/v2`)"
+      - "traefik.http.routers.registry-tls.entrypoints=registry"
+      - "traefik.http.routers.registry-tls.service=registry"
+      - "traefik.http.routers.registry-tls.tls=true"
+
+  registry-auth:
+    image: cesanta/docker_auth:1.14.0
+    container_name: registry-auth
+    restart: unless-stopped
+    command: ["--v=2", "--alsologtostderr", "/config/auth_config.yml"]
+    volumes:
+      - ./auth/config.yml:/config/auth_config.yml:ro
+      - ./auth/certs:/certs:ro
+    networks:
+      - proxy
+    labels:
+      - "logs.collect=true"
+      - "traefik.enable=true"
+      - "traefik.http.services.registry-auth.loadbalancer.server.port=5001"
+      - "traefik.http.routers.registry-auth.rule=PathPrefix(`/auth`)"
+      - "traefik.http.routers.registry-auth.entrypoints=registry"
+      - "traefik.http.routers.registry-auth.service=registry-auth"
+      - "traefik.http.routers.registry-auth-tls.rule=PathPrefix(`/auth`)"
+      - "traefik.http.routers.registry-auth-tls.entrypoints=registry"
+      - "traefik.http.routers.registry-auth-tls.service=registry-auth"
+      - "traefik.http.routers.registry-auth-tls.tls=true"
+
+networks:
+  proxy:
+    external: true
+
+volumes:
+  registry_data:
